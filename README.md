@@ -28,15 +28,15 @@ python src/dataset_preparation/minicube_creation/main_sga_baseline.py
 ### Installing the environment
 Run this to install the dependencies (you may need a different pytorch version for your hardware etc.):
 ```
-python -m venv .venv/venv1
-source .venv/venv1/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 or install with uv and exact python version:
 ```
 pip install uv # install package manager
-uv venv .venv/venv1 --python 3.10.13
-source .venv/venv1/bin/activate
+uv venv --python 3.10.13
+source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 ### Reproducing experiments

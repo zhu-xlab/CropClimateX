@@ -20,6 +20,7 @@ from deap import base, creator, tools, algorithms
 import skimage as ski
 import pandas as pd
 import multiprocessing
+import json
 
 def scale_linear(n, min_n, max_n, min_o, max_o):
     """Scale a number from one range to another."""
@@ -36,8 +37,6 @@ def compute_metrics(patches, co_mask, freq, nr_baseline_patches):
     patch_mask = create_patch_mask(patches, co_mask.shape)
 
     # obj 1 IoU county and total area (area outside + coverage)
-    # nr pixels of patches in county / nr pixels of patches + county
-    # allocation = np.sum(patch_mask[co_mask] > 0) / np.sum((patch_mask > 0) | co_mask)
     # nr pixels of patches in county / nr pixels of patches
     allocation = np.sum(patch_mask[co_mask] > 0) / np.sum((patch_mask > 0))
     # obj 2 IoU patches (overlap)
@@ -49,9 +48,6 @@ def compute_metrics(patches, co_mask, freq, nr_baseline_patches):
     # obj 4 - as much crop as possible
     # crops in patches / crops in county
     crop = np.sum(freq[patch_mask > 0]) / np.sum(freq[co_mask])
-    # obj 5 - as much extreme as possible - unused
-    # usdm = np.sum(freq[patch_mask > 0]) / np.sum(freq[co_mask])
-    # hcw = np.sum(freq[patch_mask > 0]) / np.sum(freq[co_mask])
 
     # weights should be: -, +, +, - to minimize this
     return allocation, overlap, nr_patches, crop,
@@ -264,7 +260,6 @@ def cxTwoPoint_remove_overlap(ind1, ind2):
 
 def sort_patches(ind, co_mask, freq_raster, reverse=True):
     scores = [compute_metric(i, ind, co_mask, freq_raster) for i in range(len(ind))]
-    # ind.sort(key=lambda x: scores[ind.index(x)])
     ind[:] = [x for _,x in sorted(zip(scores,ind))] # sort by the scores
     return ind
 
@@ -305,8 +300,6 @@ def plot_county_and_patches(polys, shp, freq_raster=None):
     ax.axis('off')
     ax.set_title('')
     fig.tight_layout()
-    # polys.unary_union.intersection(ind.shp.geometry).plot(ax=ax, facecolor='b', alpha=.5)
-    # polys.unary_union.difference(ind.shp.geometry).plot(ax=ax, facecolor='b', alpha=.5)
     return fig
 
 def save_patches(gdf, geoid, suffix, log_online=False, result_folder='results/'):
@@ -351,6 +344,8 @@ def log_result(inds, gen, score_names, freq_raster, freq, co_mask, shp, nr_basel
             geoid = shp['GEOID'].values[0]
             print(f'Logging to {log_dir}{geoid}/:', f'gp.fitness_best_{i}', ind.fitness.values)
             os.makedirs(f'{log_dir}{geoid}/', exist_ok=True)
+            with open(f'{log_dir}{geoid}/{geoid}_gp_fitness_{i}.txt', 'a') as f:
+                f.write(f"{gen}: {json.dumps(fitness)}\n")
             fig.savefig(f'{log_dir}{geoid}/{geoid}_gp_img_{i}_{gen}.png', dpi=300, bbox_inches='tight')
         if is_best:
             if log_online:
@@ -404,7 +399,7 @@ def shp_to_utm_crs(shp):
     shp = shp.to_crs(utm_crs)
     return shp
 
-def gp_co(shp, home_folder, hparams, use_utm=True):
+def gp_co(shp, hparams, home_folder, use_utm=True):
     """ execute the genetic program for a county.
     shp: geopandas dataframe with the shape to cover
     edge_size: int, the edge size of the patch
@@ -465,7 +460,6 @@ def gp_co(shp, home_folder, hparams, use_utm=True):
 
     creator.create("Individual", list, fitness=creator.FitnessFunc, edge_size=edge_size, bounds=bounds)
     toolbox.register("individual", create_individual_rand, creator.Individual, co_mask=new_co_mask, bounds=bounds, edge_size=edge_size)
-    # toolbox.register("individual", create_individual_fishnet, creator.Individual, polys=polys, edge_size=edge_size)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("log_image", log_result, score_names=hparams['score_names'], freq_raster=freq_raster, freq=freqs, co_mask=new_co_mask, shp=shp, nr_baseline_patches=nr_baseline_patches, log_online=hparams['online_log'], edge_size=edge_size, log_dir=hparams['log_dir'], plot_coord=True)
 

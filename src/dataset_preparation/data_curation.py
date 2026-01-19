@@ -30,6 +30,17 @@ def file_included_exists(fn, dates):
         return out
     date1 = pd.to_datetime(dates[1], format="%Y-%m-%d")
     date0 = pd.to_datetime(dates[0], format="%Y-%m-%d")
+    # if date1 - date0 <= pd.Timedelta(days=366): # needs to check if yearly file exists
+    year = re.findall(r'\d{4}', fn)[-1]
+    start_date = '01-01'
+    end_date = '12-31'
+    if year == dates[0][:4]:
+        start_date = dates[0][5:]
+    if year == dates[1][:4]:
+        end_date = dates[1][5:]
+    yearly_fn = re.sub(r'\d{4}-\d{2}-\d{2}', f'{year}-{end_date}', fn, count=0)
+    yearly_fn = re.sub(r'\d{4}-\d{2}-\d{2}', f'{year}-{start_date}', yearly_fn, count=1)
+    out = os.path.exists(yearly_fn) or out
     if date1 - date0 <= pd.Timedelta(days=31): # needs to check if monthly file exists
         # since dates could be strechted over two months -> check if for both month files exist
         start_date = date0.strftime('%Y-%m') + '-01'
@@ -43,17 +54,6 @@ def file_included_exists(fn, dates):
         monthly_fn = re.sub(r'\d{4}-\d{2}-\d{2}', start_date, monthly_fn, count=1)
         month_2_exists = os.path.exists(monthly_fn)
         out = (month_1_exists and month_2_exists) or out
-    if date1 - date0 <= pd.Timedelta(days=366): # needs to check if yearly file exists
-        year = re.findall(r'\d{4}', fn)[-1]
-        start_date = '01-01'
-        end_date = '12-31'
-        if year == dates[0][:4]:
-            start_date = dates[0][5:]
-        if year == dates[1][:4]:
-            end_date = dates[1][5:]
-        yearly_fn = re.sub(r'\d{4}-\d{2}-\d{2}', f'{year}-{end_date}', fn, count=0)
-        yearly_fn = re.sub(r'\d{4}-\d{2}-\d{2}', f'{year}-{start_date}', yearly_fn, count=1)
-        out = os.path.exists(yearly_fn) or out
     return out
 
 def download_entity(dict, geoid, name=None, dates=None, overwrite=False, transform=None, start_end_dates=None):
@@ -180,6 +180,16 @@ def download_patch(i, shp, dates, name, modality=['modis', 'dem', 'gnatsgo', 'se
                         bands=sen_bands, resolution=20, crop=False, download_engine=download_engine,
                         harmonize_names=harmonize_names, filter=filter, download_kwargs=download_kwargs)
             download_entity(dic, geoid, name+'_sen2', d, transform=transforms, start_end_dates=(sentinel_dates[0][0],sentinel_dates[-1][1]))
+    if 'sen1' in modality:
+        # pc
+        collection ='sentinel-1-rtc'
+        download_kwargs.update(dict(save_metadata=['id', 'sat:absolute_orbit', 'sat:relative_orbit', 's1:slice_number', 's1:total_slices', 'sar:looks_range', 'sar:looks_azimuth', 'sar:looks_equivalent_number', 'sat:orbit_state', 'sar:instrument_mode']))
+        for d in tqdm(sentinel_dates, position=display_position, leave=False, desc=f'sentinel1_data.w{display_position}-{geoid}'):
+            dic = dict(shp=shp, collection=collection, start_date=d[0], end_date=d[1],
+                        bands=['vv', 'vh'], resolution=10, crop=False, download_engine=download_engine,
+                        download_kwargs=download_kwargs,
+                        )
+            download_entity(dic, geoid, name+'_sen1', d, start_end_dates=(sentinel_dates[0][0],sentinel_dates[-1][1]))
 # %%
 def start_download(i, id, dates, engine='odc', buffer=False, skip_if_geoid_exists=False):
     """i: int nr of download
@@ -200,6 +210,8 @@ def start_download(i, id, dates, engine='odc', buffer=False, skip_if_geoid_exist
             res = 20
         elif 'landsat' in modality:
             res = 30
+        elif 'sen1' in modality:
+            res = 10
         # since in utm crs, add just 8 pixels the resolution
         shp['geometry'] = shp['geometry'].buffer(res*4, resolution=res, join_style='mitre')
     download_patch(i, shp, dates, name, modality=modality, download_engine=engine)
@@ -220,7 +232,7 @@ print(modality, ', workers:', num_workers)
 # %% 
 dates = ('2018-01-01', '2022-12-31')
 
-if 'sen2' in modality:
+if 'sen2'  in modality or 'sen1' in modality:
     gdf = gpd.read_file(os.path.join(home_folder, f'CropClimateX/tiny_county_list.geojson'))
 else:
     gdf = gpd.read_file(os.path.join(home_folder, f'CropClimateX/county_list.geojson'))

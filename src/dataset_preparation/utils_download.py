@@ -64,12 +64,14 @@ def create_cube(shp, collection, resolution, start_date=None, end_date=None, ban
         data = download_pc(shp, collection, resolution, start_date, end_date, bands, download_engine, filter, dtype, tmp_folder, **download_kwargs)
     elif 'sentinel_hub' == download_engine:
         data = download_sentinelhub(shp, collection, resolution, start_date, end_date, bands, os.path.join(tmp_folder, 'tmp', 'sentinel_hub', collection), filter, **download_kwargs)
-    # elif 'ogs_sentinel_hub' == download_engine:
-    #     data = download_ogs_sentinelhub(shp, collection, resolution, start_date, end_date, bands, os.path.join(tmp_folder, 'tmp', 'sentinel_hub', collection), **download_kwargs)
     elif 'cdse_s3' == download_engine:
         if collection == 'sentinel-2-l2a':
             collection = 'SENTINEL-2'
         data = download_cdse_s3(shp, collection, resolution, start_date, end_date, bands, filter, os.path.join(tmp_folder, 'tmp', download_engine, collection), **download_kwargs)
+    elif 'pc' == download_engine:
+        data = download_pc(shp, collection, resolution, start_date, end_date, bands, 'pc', filter, tmp_folder, **download_kwargs)
+    elif 'cdse' == download_engine:
+        data = download_cdse(shp, collection, resolution, start_date, end_date, bands, filter, tmp_folder, **download_kwargs)
     else:
         raise ValueError(f"Download engine {download_engine} not supported.")
     
@@ -86,7 +88,8 @@ def create_cube(shp, collection, resolution, start_date=None, end_date=None, ban
                 filtered_dict = {value: key for key, value in filtered_dict.items()}
             data = data.rename_vars(filtered_dict)
 
-    data = rm_coords(data, ['x', 'y', 'latitude', 'longitude', 'band', 'id', 'time', 'processorVersion'])
+    l = ['x', 'y', 'latitude', 'longitude', 'band', 'id', 'time', 'processorVersion'] + download_kwargs.get('save_metadata', [])
+    data = rm_coords(data, l)
     data = rm_attrs(data)
 
     import rioxarray  # reinit rioxarray in case it is not initialized in the threads
@@ -100,10 +103,17 @@ def create_cube(shp, collection, resolution, start_date=None, end_date=None, ban
 
     return data
 
-def download_pc(shp, collection, resolution, start_date, end_date, bands, download_engine, filter, tmp_folder):
+def download_pc(shp, collection, resolution, start_date, end_date, bands, download_engine, filter, tmp_folder, **kwargs):
     tg = terragon.init('pc')
     ds = tg.create(shp=shp, collection=collection, bands=bands, start_date=start_date, end_date=end_date, resolution=resolution,
-    filter=filter, download_folder=tmp_folder)
+    filter=filter, download_folder=tmp_folder, **kwargs)
+    return ds
+
+def download_cdse(shp, collection, resolution, start_date, end_date, bands, filter, tmp_folder, **kwargs):
+    credentials = {'aws_access_key_id': os.environ.get("S3_ACCESS_KEY"), 'aws_secret_access_key': os.environ.get("S3_SECRET_KEY")}
+    tg = terragon.init('cdse', credentials=credentials, base_url="https://stac.dataspace.copernicus.eu/v1")
+    ds = tg.create(shp=shp, collection=collection, bands=bands, start_date=start_date, end_date=end_date, resolution=resolution,
+    filter=filter, download_folder=tmp_folder, **kwargs)
     return ds
 
 def download_gee(shp, collection, resolution, start_date, end_date, bands, tmp_folder, num_workers=10):
@@ -535,7 +545,7 @@ def filter_doubled_processing_baseline_by_name(items):
     return result
 
 def download_cdse_s3(shp, collection, resolution, start_date, end_date, bands, filter, tmp_folder, use_s3fs=False, stats_band=None, time_range=None, mosaic_args=None):
-    # add id to the time, change this in terragon:
+    # adds id to the time, this was change in terragon0.2.0:
     # # skip items which were not found
     # time_data, times, ids = map(list, zip(*[(ds, item["properties"]["datetime"], item["id"]) for ds, item in zip(time_data, items) if ds is not None]))
 
@@ -548,7 +558,7 @@ def download_cdse_s3(shp, collection, resolution, start_date, end_date, bands, f
     credentials = {'aws_access_key_id': os.environ.get("S3_ACCESS_KEY"), 'aws_secret_access_key': os.environ.get("S3_SECRET_KEY")}
     tg = terragon.init('cdse', credentials=credentials)
     if time_range is None:
-        items = tg.search(shp=shp, collection=collection, bands=bands, start_date=start_date, end_date=end_date, resolution=resolution, filter=filter, num_workers=4)
+        items = tg.search(shp=shp, collection=collection, bands=bands, start_date=start_date, end_date=end_date, resolution=resolution, filter=filter, num_workers=2)
         items = filter_doubled_processing_baseline_by_name(items)
         data = tg.download(items)
     else: # use stats for time range
@@ -579,7 +589,7 @@ def s3_filter_by_stats(shp, collection, resolution, start_date, end_date, band, 
         for date_range in date_ranges:
             s_date = date_range[0]
             e_date = date_range[1]
-            items = tg.search(shp=shp, collection=collection, bands=[band], start_date=s_date, end_date=e_date, resolution=resolution, filter=filter, num_workers=4)
+            items = tg.search(shp=shp, collection=collection, bands=[band], start_date=s_date, end_date=e_date, resolution=resolution, filter=filter, num_workers=2)
             if items is None:
                 warnings.warn(f"No items found for {s_date} - {e_date}.")
                 continue

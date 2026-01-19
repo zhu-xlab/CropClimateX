@@ -17,15 +17,11 @@ from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 from pyproj import CRS
 import matplotlib.pyplot as plt
-# %%
-edge_size= 400 # 400*30m=12km
-
 home_folder = rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
-data_dir = home_folder / "data/supp_data/"
-result_folder = os.path.join(home_folder, 'results/minicube_generation/')
-os.makedirs(result_folder, exist_ok=True)
+edge_size=400 # 400*30m=12km
+
 # %% create patches by shifting
-def create_baselines_sga(shp, hparams, result_folder, strategy=0, use_utm=True, project=None):
+def create_baselines_sga(shp, hparams, strategy=0, use_utm=True, project=None):
     geoid = shp['GEOID'].values[0]
     if hparams['online_log']:
         os.environ["WANDB_SILENT"] = "true"
@@ -67,7 +63,7 @@ def create_baselines_sga(shp, hparams, result_folder, strategy=0, use_utm=True, 
         gdf_b.set_geometry('geometry', inplace=True)
         fig_b = plot_county_and_patches(gdf_b, shp, freq_raster=freqs[0])
 
-        save_patches(gdf_b, geoid, suffix='baseline', log_online=hparams['online_log'], result_folder=result_folder)
+        save_patches(gdf_b, geoid, suffix='baseline', log_online=hparams['online_log'], result_folder=hparams['log_dir'])
         if hparams['online_log']:
             for n, score in zip(hparams['score_names'], best_scores):
                 wandb.log({f'{n}.baseline': score})
@@ -78,9 +74,9 @@ def create_baselines_sga(shp, hparams, result_folder, strategy=0, use_utm=True, 
             plt.close()
         else:
             print(f'baseline: {best_scores} = {best_score}')
-            os.makedirs(result_folder, exist_ok=True)
-            fig_b.savefig(f"{result_folder}{geoid}_baseline.png")
-            print(f"You can find the results for baseline in: {result_folder}")
+            os.makedirs(hparams['log_dir'], exist_ok=True)
+            fig_b.savefig(f"{hparams['log_dir']}{geoid}_baseline.png")
+            print(f"You can find the results for baseline in: {hparams['log_dir']}")
 
     if strategy != 1:
         # create with sga
@@ -113,7 +109,7 @@ def create_baselines_sga(shp, hparams, result_folder, strategy=0, use_utm=True, 
         gdf_sga = gpd.GeoDataFrame(geometry=geometry, crs=freqs[0].rio.crs)
         fig_b_sga = plot_county_and_patches(gdf_sga, shp, freq_raster=freqs[0])
         
-        save_patches(gdf_sga, geoid, suffix='sga', log_online=hparams['online_log'], result_folder=result_folder)
+        save_patches(gdf_sga, geoid, suffix='sga', log_online=hparams['online_log'], result_folder=hparams['log_dir'])
         if hparams['online_log']:
             for n, score in zip(hparams['score_names'], scores[idx]):
                 wandb.log({f'{n}.sga': score})
@@ -124,44 +120,53 @@ def create_baselines_sga(shp, hparams, result_folder, strategy=0, use_utm=True, 
             plt.close()
         else:
             print(f'sga: {scores[idx]} = {res_scores[idx]}')
-            os.makedirs(result_folder, exist_ok=True)
-            fig_b_sga.savefig(f"{result_folder}{geoid}_sga_best.png")
-            print(f"You can find the results for sga in: {result_folder}")
+            os.makedirs(hparams['log_dir'], exist_ok=True)
+            with open(hparams['log_dir'] + f"{geoid}_sga_best.txt", "w") as f:
+                f.write(f'sga: {scores[idx]} = {res_scores[idx]}\n')
+                f.write(f'abs_nr_patches.sga: {len(res)}')
+            fig_b_sga.savefig(f"{hparams['log_dir']}{geoid}_sga_best.png")
+            print(f"You can find the results for sga in: {hparams['log_dir']}")
 
         if hparams['online_log']:
             wandb.finish()
 
 # %%
-hparams = dict(
-    score_names=['allocation', 'patch_overlap', 'nr_patches', 'crop'],
-    fitness_weights=(-2, +5, +1, -4,),
-    online_log=False, # log to wandb
-    tags=[''], # tags for wandb
-    crop_score=0.05,
-    crop_score2=0.2,
-    allocation_score=0.4,
-    multi_process=int(os.cpu_count()//3),
-    pixel_shift=30, # high number for testing
-)
-gdf = gpd.read_file(data_dir / 'counties.geojson')
-min, max = gdf['geom_sqkm'].min(), gdf['geom_sqkm'].max()
-# gdf = gdf.sample(frac=1) # randomize the df
-gdf = gdf[gdf['GEOID'].isin(['13155'])] # use this line to run a specific county, or comment for all
+if __name__ == '__main__':
+    data_dir = home_folder / "data/supp_data/"
+    result_folder = os.path.join(home_folder, 'results/minicube_generation/')
+    os.makedirs(result_folder, exist_ok=True)
 
-user = os.environ.get('WANDB_USER')
-project = 'minicube-creation-baseline-sga'
-api = wandb.Api()
-for i in tqdm(gdf.index, total=len(gdf.index)):
-    geoid = gdf.loc[[i]]['GEOID'].values[0]
-    if hparams['online_log']:
-        runs = api.runs(f"{user}/{project}", filters={"tags": hparams['tags'][0], "config.geoid": geoid})
-        if len(runs) > 0:
-            continue
+    hparams = dict(
+        score_names=['allocation', 'patch_overlap', 'nr_patches', 'crop'],
+        fitness_weights=(-2, +5, +1, -4,),
+        online_log=False, # log to wandb
+        tags=[''], # tags for wandb
+        crop_score=0.05,
+        crop_score2=0.2,
+        allocation_score=0.4,
+        multi_process=int(os.cpu_count()//3),
+        pixel_shift=30, # high number for testing
+        log_dir=result_folder,
+    )
+    gdf = gpd.read_file(data_dir / 'counties.geojson')
+    min, max = gdf['geom_sqkm'].min(), gdf['geom_sqkm'].max()
+    # gdf = gdf.sample(frac=1) # randomize the df
+    gdf = gdf[gdf['GEOID'].isin(['13155'])] # use this line to run a specific county, or comment for all
 
-    # update params
-    nr_patches_scaled = scale_linear(gdf.loc[[i]]['geom_sqkm'].values[0], min, max, 4, 173) # smallest vs biggest countie and number of patches
-    crop_score = 1/nr_patches_scaled * .5 # needs to have at least 50% crop, if crop would be evenly distributed across the county
-    crop_score2 = 0.4 * crop_score # if area outside needs to have at least 40% crop than a usual patch (if evenly distributed)
-    pixel_shift = scale_linear(gdf.loc[[i]]['geom_sqkm'].values[0], min, max, 1, 6)
-    hparams.update({'pixel_shift': pixel_shift, 'crop_score': crop_score, 'crop_score2': crop_score2})
-    create_baselines_sga(gdf.loc[[i]], hparams, result_folder, project)
+    user = os.environ.get('WANDB_USER')
+    project = 'minicube-creation-baseline-sga'
+    api = wandb.Api()
+    for i in tqdm(gdf.index, total=len(gdf.index)):
+        geoid = gdf.loc[[i]]['GEOID'].values[0]
+        if hparams['online_log']:
+            runs = api.runs(f"{user}/{project}", filters={"tags": hparams['tags'][0], "config.geoid": geoid})
+            if len(runs) > 0:
+                continue
+
+        # update params
+        nr_patches_scaled = scale_linear(gdf.loc[[i]]['geom_sqkm'].values[0], min, max, 4, 173) # smallest vs biggest countie and number of patches
+        crop_score = 1/nr_patches_scaled * .5 # needs to have at least 50% crop, if crop would be evenly distributed across the county
+        crop_score2 = 0.4 * crop_score # if area outside needs to have at least 40% crop than a usual patch (if evenly distributed)
+        pixel_shift = scale_linear(gdf.loc[[i]]['geom_sqkm'].values[0], min, max, 1, 6)
+        hparams.update({'pixel_shift': pixel_shift, 'crop_score': crop_score, 'crop_score2': crop_score2})
+        create_baselines_sga(gdf.loc[[i]], hparams, project)

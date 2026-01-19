@@ -88,4 +88,4 @@ for idx in tqdm(gdf.index, total=len(gdf.index)):
         tournsize = scale_linear(row['geom_sqkm'].values[0], min, max, 3, 12)
 
         _hparams.update({'n_pop': n_pop, 'n_gen': n_gen, 'noise_decay': noise_decay, 'seed': s, 'tournsize': tournsize})
-        gp_co(row, home_folder, _hparams, use_utm=True)
+        gp_co(row, _hparams, home_folder, use_utm=True)

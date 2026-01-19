@@ -174,7 +174,6 @@ if __name__ == "__main__":
     import itertools
     # load final geoids
     geoids = list(itertools.chain.from_iterable(yaml.safe_load(open(os.path.join(home_folder, 'configs/data/geoids_split.yaml')))['split']['ratio']))
-    # geoids = list(itertools.chain.from_iterable(yaml.safe_load(open(os.path.join(home_folder, 'configs/data/geoids_split_sen2.yaml')))['split']['ratio']))
 
     transform = [
         [transforms.Compose([Mean(dim=(-2,-1,-5))]), 'Mean', ],

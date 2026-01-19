@@ -139,6 +139,8 @@ class Binarize():
 
 class ReplaceValue():
     def __init__(self, value='nan', replace_value=0) -> None:
+        if isinstance(value, (int, float)):
+            value = list(value)
         self.value = value
         self.replace_value = replace_value
     
@@ -148,7 +150,8 @@ class ReplaceValue():
         elif 'inf' in self.value:
             return torch.where(float(self.value), self.replace_value, sample)
         else:
-            return torch.where(sample == self.value, self.replace_value, sample)
+            mask = torch.isin(sample, self.value)
+            return torch.where(mask, self.replace_value, sample)
 
 class ToTensor():
     """Convert the sample to a tensor."""

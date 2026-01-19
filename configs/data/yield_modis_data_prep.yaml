@@ -1,9 +1,5 @@
 defaults:
   - geoids_split_corn
-  # - geoids_split_oats
-  # - geoids_split_soybeans
-  # - geoids_split_cotton
-  # - geoids_split_winter_wheat
 
 _target_: src.datasets.datamodule.DataModule
 task: 'crop_yield'
@@ -16,15 +12,6 @@ seed: ${seed}
 
 crops: 'corn'
 time_range: ['04-01', '11-30']
-# crops: 'oats'
-# time_range: ['04-01', '09-30']
-# crops: 'soybeans'
-# time_range: ['05-01', '10-31']
-# crops: 'cotton'
-# time_range: ['04-01', '12-31']
-# crops: 'winter_wheat'
-# time_range: ['09-01', '08-31']
-# years: [2019, 2020, 2021, 2022] # only for winter wheat, because it was planted the year before (no data for 2018)
 
 years: [2018, 2019, 2020, 2021, 2022]
 bands:

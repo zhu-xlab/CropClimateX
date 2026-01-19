@@ -120,7 +120,7 @@ class YieldDataset(Dataset):
 
                     res_dict = self.resampling['cdl'] if 'cdl' in self.resampling else self.resampling['default'] if self.resampling else None
                     co_mask = resample_yearly(cdl['co_mask'], res_dict).values
-                    crop_mask = resample_yearly(cdl[cdl_str].isin(self.crops), res_dict).values
+                    crop_mask = resample_yearly(cdl[cdl_str].isin(self.crop_ids), res_dict).values
                     masks[i] = {'co_mask': co_mask, 'crop_mask': crop_mask}
 
         dss = []

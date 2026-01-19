@@ -5,6 +5,32 @@ from functools import reduce
 from operator import or_
 import math
 import pyproj
+import matplotlib.pyplot as plt
+from matplotlib import rcParamsDefault
+
+def increase_plt_text_size(scale):
+
+    # Reset all rcParams to Matplotlib defaults
+    plt.rcParams.update(rcParamsDefault)
+    # Named font sizes mapped to approximate numeric points
+    size_map = {
+        'xx-small': 6, 'x-small': 8, 'small': 10, 'medium': 12,
+        'large': 14, 'x-large': 16, 'xx-large': 18
+    }
+
+    # Get current font sizes
+    params = [
+        'font.size', 'axes.titlesize', 'axes.labelsize',
+        'xtick.labelsize', 'ytick.labelsize',
+        'legend.fontsize', 'figure.titlesize'
+    ]
+
+    for p in params:
+        v = plt.rcParams[p]
+        # Convert named sizes to numeric, scale, then back to numeric value
+        if isinstance(v, str):
+            v = size_map.get(v, 12)  # fallback if unknown
+        plt.rcParams[p] = v * scale
 
 def rm_attrs(ds):
     """Remove all attributes from a dataset and its variables."""
@@ -84,14 +110,14 @@ def histogram_matching(da, ref_da, bands=[]):
 
     return da
 
-def select_image_by_cloud_cover(ds, band, cloud_cover_thresh=1., invalid_values=[np.nan]):
+def select_image_by_cloud_cover(ds, band, cloud_cover_thresh=1., invalid_values=[]):
     """Select the first image with cloud cover below threshold and lowest cloud cover in set.
     invalid_values are treated like cloud cover.
     Band is assumed to be binary mask with 1 for cloud and 0 for no cloud."""
     # remove images with cloud cover / invalid_values above threshold
     bands = [b for b in ds.data_vars if b != band]
-    invalid_mask = reduce(or_, [ds[b].isin(invalid_values) for b in bands]) # alternative for iterating over the arrays
-    
+    invalid_mask = reduce(or_, [(ds[b].isin(invalid_values) | ds[b].isnull()) for b in bands]) # alternative for iterating over the arrays
+
     ds[band] = (ds[band] | invalid_mask)
     cloud_cover = ds[band].sum(dim=[dim for dim in ds.sizes if dim != 'time']) / np.prod([ds.sizes[dim] for dim in ds.sizes if dim != 'time'])
     ds.coords['cloud_cover'] = cloud_cover
@@ -111,14 +137,23 @@ def select_image_by_cloud_cover(ds, band, cloud_cover_thresh=1., invalid_values=
 
     return da
 
-def select_pixels_by_first_valid_value(ds, invalid_values=[np.nan]):
+def select_pixels_by_first_valid_value(ds, invalid_values=[], sort_by_amount=False, proxy_band='first'):
     """Select the first valid value in time dimension for each pixel in the dataset."""
+    # sort dataset by number of valid values in time dimension
+    if sort_by_amount:
+        if proxy_band == "first":
+            proxy_band = [b for b in ds.data_vars if b not in ["spatial_ref"]][0]
+        valid_counts = (ds[proxy_band].isin(invalid_values) | ds[proxy_band].isnull()).sum(dim=('x', 'y'))
+        ds = ds.sortby(valid_counts, ascending=True)
     da = ds.isel(time=0).copy()
+    # save the coords to restore them later
+    original_coords = {coord: da.coords[coord] for coord in da.coords}
     for i in range(1,len(ds.time)):
-        da = xr.where(da.isin(invalid_values), ds.isel(time=i), da)
-    # rm time coordinate if it got added by the resample method
-    if 'time' in da.coords:
-        del da['time']
+        da = xr.where((da[proxy_band].isin(invalid_values) | da[proxy_band].isnull()), ds.isel(time=i), da)
+
+    # restore coordinates
+    da = da.assign_coords({coord: original_coords[coord] for coord in original_coords})
+    
     return da
 
 def select_pixels_by_mask(ds, band, thres=1.):
@@ -245,8 +280,7 @@ def mosaic(ds, interval='16D', func=select_pixels_by_first_valid_value, **kwargs
         if end_date > ds.time.max().values:
             break
         start_date = end_date + pd.Timedelta(1, 'ns')
-
-    new_ds = xr.concat(time_data, dim='time')
+    new_ds = xr.concat(time_data, dim='time', coords='all')
     new_ds = new_ds.sortby('time')
     return new_ds
 
@@ -354,7 +388,7 @@ def shp_to_utm_crs(shp):
     shp = shp.to_crs(utm_crs)
     return shp
 
-def number_to_range(input_num, divider):
+def number_to_range(input_num, divider=10):
     """transform the input number to a range of the divider."""
     if isinstance(input_num, str):
         input_num = int(input_num)

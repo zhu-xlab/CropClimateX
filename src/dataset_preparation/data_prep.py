@@ -26,11 +26,12 @@ import subprocess
 import random
 import socket
 import rasterio
+from rasterio.enums import Resampling
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from utils import check_bits_set, mosaic, select_pixels_by_cloud_cover, number_to_range
+from utils import check_bits_set, mosaic, select_pixels_by_cloud_cover, number_to_range, select_pixels_by_first_valid_value
 # %%
 nr_groups = 10 # how many patches will be grouped into one zarr file
 dates = ('2018-01-01', '2022-12-31')
@@ -87,8 +88,9 @@ def sv_patches(gdf, name, data=None, transform=None, dates=None, encoding=None):
             data_new = data.rio.clip(gdf.loc[[idx]].geometry)
             if data_new.sizes['x'] != data_new.sizes['y'] or data_new.sizes['y'] % 2:
                 # the size is wrong (only happened for 37083_2)
-                warnings.warn(f"Size of the patch {geoid, idx} does not match, starting to adjust automatically: {data_new.sizes}")
                 data_new = data.rio.clip(gdf.loc[[idx]].geometry, all_touched=True)
+                if data_new.sizes['x'] != data_new.sizes['y'] or data_new.sizes['y'] % 2:
+                    warnings.warn(f"Size of the patch {geoid, idx} does not match, starting to adjust automatically: {data_new.sizes}")
                 # rm single pixels from each side
                 while data_new.sizes['x'] % 2:
                     data_new = data_new.isel(x=slice(1, None))
@@ -132,7 +134,7 @@ def load_netcdf_distributed_files(path, region=None, dim='time', num_workers=os.
             return
         if region is not None:
             ds = ds.rio.write_crs(region.crs)
-            ds = ds.rio.clip(region.geometry)
+            ds = ds.rio.clip(region.geometry, all_touched=True)
         ds = ds.load() # necessary when copying and deleting to server
         ds.close()
         return ds
@@ -170,7 +172,9 @@ def load_netcdf_distributed_files(path, region=None, dim='time', num_workers=os.
             ds_l = [ds.rio.write_crs(ds.rio.crs) for ds in ds_l]
             ds_l = [ds_l[0]] + [ds.rio.reproject_match(ds_l[0]) for ds in ds_l[1:]]
         ds_l = [d for d in ds_l if d is not None]
-        ds = xr.concat(ds_l, dim=dim, coords='minimal')
+        if not all(['spatial_ref' in ds.coords for ds in ds_l]):
+            ds_l = [d.rio.write_crs(d.rio.crs) for d in ds_l]
+        ds = xr.concat(ds_l, dim=dim, coords="minimal")
     else:
         ds = ds_l[0]
     ds = ds.sortby(dim)
@@ -202,10 +206,8 @@ def indices_are_identical(datasets: list, indices: list) -> bool:
 
     return True
 
-def prepare_patches(gdf, geoid, gdf_cos, data_path, sv_path, dates, version_name,
-                    modality=['modis', 'modis_lai', 'modis_lst', 'daymet', 'usdm', 'dem', 'soil', 'cdl', 'nlcd', 'sen2', 'landsat'], overwrite=False):
-    shp_co = gdf_cos[gdf_cos['GEOID'] == geoid]
-    shp_co = shp_co.to_crs(gdf.crs)
+def prepare_patches(gdf, geoid, shp_co, data_path, sv_path, dates, version_name,
+                    modality=['modis', 'modis_lai', 'modis_lst', 'daymet', 'usdm', 'dem', 'soil', 'cdl', 'nlcd', 'sen2', 'sen1', 'landsat'], overwrite=False):
     nr_files = len(gdf.index)
     
     year_start = int(dates[0].split('-')[0])
@@ -307,7 +309,6 @@ def prepare_patches(gdf, geoid, gdf_cos, data_path, sv_path, dates, version_name
             daymet_rest = u_dymt.load_daymet_patch(shp,
                                               os.path.join(home_folder, 'data/daymet/'), bands=['prcp', 'vp', 'srad'],
                                               crs=gdf.crs, nr_jobs=2, time_slice=(dates[0], dates[1]))
-
             hcw_index = u_dymt.compute_hcw_index(daymet, ['tmin', 'tmax'], quantiles=[.01,.05,.1,.9,.95,.99], start_date=dates[0], end_date=dates[1], at_least_three_days=True)
             daymet = daymet.sel(time=slice(dates[0], dates[1])) # now select the right time slice for daymet
             daymet['prcp'] = daymet_rest['prcp']
@@ -319,6 +320,29 @@ def prepare_patches(gdf, geoid, gdf_cos, data_path, sv_path, dates, version_name
         daymet['hcw'] = hcw_index
         sv_patches(gdf, name, data=daymet, encoding=encoding)
     
+    name = "daymet_clim"
+    if name in modality and not check_exists(nr_files, geoid, name, overwrite=overwrite):
+        # encoding={d: {'dtype': 'float32'} for d in ['tmin_mean', 'tmax_mean', 'prcp_mean', 'srad_mean', 'vp_mean', 'tmin_std', 'tmax_std', 'prcp_std', 'srad_std', 'vp_std']}
+        encoding={d: {'dtype': 'uint16', 'add_offset': 200, 'scale_factor': 0.01, '_FillValue': np.iinfo(np.uint16).min} for d in ['tmin_mean', 'tmax_mean']}
+        encoding.update({d: {'dtype': 'uint16', 'scale_factor': 0.01, '_FillValue': np.iinfo(np.uint16).max} for d in ['prcp_mean', 'srad_mean']})
+        encoding.update({d: {'dtype': 'uint16', 'scale_factor': 0.1, '_FillValue': np.iinfo(np.uint16).max} for d in ['vp_mean']})
+        encoding.update({d: {'dtype': 'uint16', 'scale_factor': 0.01, '_FillValue': np.iinfo(np.uint16).max} for d in ['tmin_std', 'tmax_std', 'prcp_std', 'srad_std', 'vp_std']})
+
+        shp = gpd.GeoDataFrame(geometry=[gdf.unary_union], crs=gdf.crs)
+        # load all data for patches
+        daymet_clim = u_dymt.load_daymet_patch(shp, os.path.join(home_folder, 'data/daymet/'), bands=['tmin', 'tmax', 'vp', 'prcp', 'srad'], crs=gdf.crs, nr_jobs=2, time_slice=('1980-01-01', '2017-12-31'))
+        daymet_clim['tmin'] += 273.15 # to kelvin
+        daymet_clim['tmax'] += 273.15
+        daymet_clim_mean, daymet_clim_std = u_dymt.climate_standardization(daymet_clim, return_z=False, return_mean_std=True)
+        # rename vars
+        for var in daymet_clim_mean.data_vars:
+            daymet_clim_mean = daymet_clim_mean.rename({var: f"{var}_mean"})
+            daymet_clim_std = daymet_clim_std.rename({var: f"{var}_std"})
+        # merge them
+        for var in daymet_clim_std.data_vars:
+            daymet_clim_mean[var] = daymet_clim_std[var]
+        sv_patches(gdf, name, data=daymet_clim_mean, encoding=encoding)
+
     # usdm numbers between 0 and 5; -> unit8
     name = 'usdm'
     if name in modality:
@@ -466,6 +490,77 @@ def prepare_patches(gdf, geoid, gdf_cos, data_path, sv_path, dates, version_name
             return ds
         sv_patches(gdf, name, transform=transform, encoding=encoding)
 
+    name = "sen1"
+    load_name = version_name + '_' + name
+    if name in modality:
+        bands = ["vv", "vh"]
+        db_min, db_max = -50, 20
+        # nodata: -32768
+        encoding={d: {'dtype': 'uint16', 'scale_factor': (np.abs(db_min) + db_max) / 65535, 'add_offset': db_min, '_FillValue': np.iinfo(np.uint16).min} for d in bands}
+        drop_less_than_ts = 5
+        def transform(row):
+            ds = load_netcdf_distributed_files(os.path.join(data_path, rf'{load_name}/{geoid}/{load_name}_{row["GEOID_PID"].iloc[0]}_.*.nc$'))
+            if 'spatial_ref' in ds.data_vars:
+                del ds['spatial_ref']
+            # split into a and d
+            ds_a = ds.where(ds['sat:orbit_state'] == 'ascending', drop=True)
+            ds_d = ds.where(ds['sat:orbit_state'] == 'descending', drop=True)
+            # 2. orbits to 12 day resolution
+            if len(ds_a.time) > 0:
+                ds_a = mosaic(ds_a, interval='12D', func=select_pixels_by_first_valid_value, invalid_values=[0, np.iinfo(np.uint16).max, np.iinfo(np.int16).min, np.nan], sort_by_amount=True)
+                ds_a = rm_time_step(ds_a, threshold=.7, invalid_values=[0, np.iinfo(np.uint16).max, np.iinfo(np.int16).min, np.nan], band='vv')
+                if len(ds_a.time) > 0:
+                    valid_years = (
+                        ds_a["vv"]
+                        .groupby("time.year")
+                        .count()
+                        .where(lambda x: x >= drop_less_than_ts, drop=True)
+                        .year
+                    )
+                else:
+                    valid_years = []
+                ds_a = ds_a.where(ds_a["time.year"].isin(valid_years), drop=True)
+            if len(ds_d.time) > 0:
+                ds_d = mosaic(ds_d, interval='12D', func=select_pixels_by_first_valid_value, invalid_values=[0, np.iinfo(np.uint16).max, np.iinfo(np.int16).min, np.nan], sort_by_amount=True)
+                ds_d = rm_time_step(ds_d, threshold=.7, invalid_values=[0, np.iinfo(np.uint16).max, np.iinfo(np.int16).min, np.nan], band='vv')
+                if len(ds_d.time) > 0:
+                    valid_years = (
+                        ds_d["vv"]
+                        .groupby("time.year")
+                        .count()
+                        .where(lambda x: x >= drop_less_than_ts, drop=True)
+                        .year
+                    )
+                else:
+                    valid_years = []
+                ds_d = ds_d.where(ds_d["time.year"].isin(valid_years), drop=True)
+            # concat and order by time again
+            ds = xr.concat([ds_a, ds_d], dim='time').sortby('time')
+            if len(ds.time) < 1:
+                raise ValueError("No valid time steps found.")
+            # resample to 20m
+            ds = ds.rio.write_crs(ds.rio.crs)
+            ds = ds.rio.reproject(ds.rio.crs, resolution=20, resampling=Resampling.bilinear)
+            # drop added fillvalue from reproject
+            for b in bands:
+                ds[b].attrs.pop('_FillValue', None)
+            # convert to dB
+            ds = ds.map(db_scale)
+            # clip to min and max
+            ds = ds.clip(db_min, db_max)
+            # apply no scaling -> will be automatically applied when saving
+
+            ds = ds.drop_vars([v for v in ds.coords if v not in ['time', 'x', 'y', 'sat:orbit_state']])
+            return ds
+        sv_patches(gdf, name, transform=transform, encoding=encoding)
+
+def rm_time_step(ds, threshold, invalid_values, band):
+    mask = ds[band].isnull() | ds[band].isin(invalid_values)
+    time_step_rm = ((mask.sum(dim=('x', 'y')) / (ds.sizes['x']*ds.sizes['y'])) > threshold).compute()
+    if time_step_rm.any():
+        ds = ds.where(~time_step_rm, drop=True)
+    return ds
+
 def fill_missing_dates(ds, freq, temp_align=False):
     l = []
     for y in range(2018, 2023):
@@ -487,7 +582,11 @@ def fill_missing_dates(ds, freq, temp_align=False):
         l.append(ds_n)
     return xr.concat(l, dim='time')
 
-gdf = gpd.read_file(os.path.join(home_folder, f'CropClimateX/county_list.geojson'))
+def db_scale(x):
+    # convert linear to dB
+    with np.errstate(divide='ignore', invalid='ignore'):
+        x = 10 * np.where(x <= 0, np.nan, np.log10(x))
+    return x
 
 geoids = gdf['GEOID'].tolist()
 fns = [os.path.join(home_folder, f'CropClimateX/patches/final/patches_{geoid}.geojson') for geoid in geoids]

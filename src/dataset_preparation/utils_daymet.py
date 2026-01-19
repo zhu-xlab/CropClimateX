@@ -14,7 +14,7 @@ from tqdm import tqdm
 from utils import crop_to_region, load_subregion_and_reproject
 
 
-def climate_standardization(ds, nr_days=15, return_mean_std=False, n_jobs=10):
+def climate_standardization(ds, nr_days=15, return_z=True, return_mean_std=False, n_jobs=10):
     """Compute z = (x - mean) / std for each day in the dataset through the surrounding days before and after nr_days."""
     manager = mp.Manager()
     ds_z = manager.list()
@@ -36,19 +36,22 @@ def climate_standardization(ds, nr_days=15, return_mean_std=False, n_jobs=10):
         ds_f = ds.sel(time=ds.time.dt.dayofyear.isin(days)) # select surrounding days
         mean = ds_f.mean(skipna=True, dim='time')
         std = ds_f.std(skipna=True, ddof=1, dim='time')
-        z = (ds_f - mean) / std
-        # only add day i
-        ds_z.append(z.sel(time=z.time.dt.dayofyear.isin(i))) # select only day i
+        if return_z:
+            z = (ds_f - mean) / std
+            # only add day i
+            ds_z.append(z.sel(time=z.time.dt.dayofyear.isin(i))) # select only day i
         if return_mean_std:
             ds_mean.append(mean)
             ds_std.append(std)
 
     Parallel(n_jobs=n_jobs)(delayed(climate_stand_day)(d) for d in range(1,366))
 
+    out = ()
+    if return_z:
+        out += (xr.concat(ds_z, 'time').sortby('time'),)
     if return_mean_std:
-        return xr.concat(ds_z, 'time').sortby('time'), xr.concat(ds_mean, 'time').sortby('time'), xr.concat(ds_std, 'time').sortby('time')
-    else:
-        return xr.concat(ds_z, 'time').sortby('time')
+        out += (xr.concat(ds_mean, 'time').sortby('time'), xr.concat(ds_std, 'time').sortby('time'))
+    return out
 
 def replace_non_successive_ones(arr_in):
     # assumes [time, ] and replaces all not successive 1s with count < 3
@@ -199,6 +202,3 @@ if __name__ == '__main__':
     import rootutils
     home_folder = rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
     create_hcw_frequencies(os.path.join(home_folder, 'data/daymet/hcw/freq/'), os.path.join(home_folder, 'data/daymet/'))
-# %%
-# for i in range(len(quantiles)):
-#     print(np.unique(res.isel(band=i).to_array(), return_counts=True))

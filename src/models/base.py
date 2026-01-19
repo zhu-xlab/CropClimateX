@@ -24,21 +24,6 @@ def time_distribute(x, time_size=None):
     else:
         return x.contiguous().view(-1, *x.size()[2:])
 
-class Skip(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
-
-class Reshape(nn.Module):
-    def __init__(self, shape):
-        super().__init__()
-        self.shape = shape
-
-    def forward(self, x):
-        return x.view(x.size(0), *self.shape)
-
 class SequentialNet(nn.Module):
     def __init__(self, blocks: list[nn.Module]|dict[str, nn.Module]):
         super().__init__()

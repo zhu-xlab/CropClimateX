@@ -17,8 +17,6 @@ metrics:
     rmse:
       _target_: torchmetrics.MeanSquaredError
       squared: False
-    r2:
-      _target_: torchmetrics.R2Score
   val:
     mae:
       _target_: torchmetrics.MeanAbsoluteError
@@ -28,8 +26,6 @@ metrics:
     rmse:
       _target_: torchmetrics.MeanSquaredError
       squared: False
-    r2:
-      _target_: torchmetrics.R2Score
   test:
     mae:
       _target_: torchmetrics.MeanAbsoluteError
@@ -39,8 +35,6 @@ metrics:
     rmse:
       _target_: torchmetrics.MeanSquaredError
       squared: False
-    r2:
-      _target_: torchmetrics.R2Score
 best_metric_agg:
   metric_name: mse # needs to be the metric name from the val metrics section
   monitor_mode: min

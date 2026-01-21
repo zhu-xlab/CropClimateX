@@ -73,7 +73,18 @@ python src/main.py train=False test=True experiment=final_yield_cnn_lstm ckpt_pa
 `python src/main.py --multirun data.split.nr_folds=6 data.split.k=0,1,2,3,4,5 tags=[<tag>]`
 - for more see: https://hydra.cc/docs/intro/
 ## Citation
-If you use this work or the dataset please consider citing: TBA
+If you use this work or the dataset please consider citing:
+```
+@article{hohlLargescaleMultitask2026,
+  title = {A Large-Scale, Multitask, Multisensory Dataset for Climate-Aware Crop Monitoring in the {{US}} from 2018--2022},
+  author = {H{\"o}hl, Adrian and {Ofori-Ampofo}, Stella and {Fern{\'a}ndez-Torres}, Miguel-{\'A}ngel and Kuzu, R{\i}dvan Salih and Zhu, Xiao Xiang},
+  year = 2026,
+  month = jan,
+  journal = {Scientific Data},
+  issn = {2052-4463},
+  doi = {10.1038/s41597-026-06611-x}
+}
+```
 ## License
 The code is licensed under the MIT license.
 ## Acknowledgements
